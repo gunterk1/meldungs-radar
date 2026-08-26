@@ -1,0 +1,30 @@
+# Lokaler Betrieb. n8n orchestriert und stellt die Freigabe bereit — die
+# Fachlogik liegt im gemounteten Repo und ist per `npm test` geprüft.
+# Es gibt bewusst nur EINE Implementierung, nicht eine im Code und eine
+# nachgebaute in einem n8n-Code-Node.
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    restart: unless-stopped
+    ports: ['5678:5678']
+    environment:
+      - GENERIC_TIMEZONE=Europe/Berlin
+      - TZ=Europe/Berlin
+      - N8N_DIAGNOSTICS_ENABLED=false          # keine Telemetrie
+      - N8N_RUNNERS_ENABLED=true
+      - STEUERRADAR_BASIS_URL=${STEUERRADAR_BASIS_URL:-https://api.openai.com/v1}
+      - STEUERRADAR_MODELL=${STEUERRADAR_MODELL:-gpt-4o-mini}
+      - STEUERRADAR_API_KEY=${STEUERRADAR_API_KEY:-}
+    volumes:
+      - ./n8n-daten:/home/node/.n8n
+      - .:/repo                                 # das getestete Repo, nicht kopierter Code
+
+  # Selbst betriebenes Modell — für diesen Anwendungsfall nicht nötig
+  # (öffentliche Quellen), aber für Variante B mit Kundendaten zwingend.
+  #   docker compose --profile lokal up -d
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ['lokal']
+    restart: unless-stopped
+    ports: ['11434:11434']
+    volumes: ['./ollama-daten:/root/.ollama']
