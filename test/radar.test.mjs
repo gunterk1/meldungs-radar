@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { feedZerlegen, nurNeue } from '../lib/feed.mjs';
-import { klassifikationPruefen, SchemaFehler } from '../lib/schema.mjs';
+import { klassifikationPruefen, SchemaFehler, jsonSchema } from '../lib/schema.mjs';
 import { eskalieren, VORLAGE, protokollZeile, KONFIDENZ_SCHWELLE } from '../lib/regeln.mjs';
 import { klassifizieren, nutzerPrompt } from '../lib/klassifikator.mjs';
 
@@ -76,6 +76,49 @@ describe('Schemaprüfung', () => {
       assert.equal(r.fehler.feld, feld, `Fehler sollte Feld "${feld}" benennen, benannte "${r.fehler.feld}"`);
     });
   }
+
+  test('nimmt einen vollständigen Zeitstempel an und kürzt auf das Datum', () => {
+    // Real beobachtet am 2026-08-26. Toleranz gegenüber der FORM, nicht dem INHALT.
+    const r = klassifikationPruefen({ ...GUELTIG, wirksam_ab: '2026-09-15T11:50:00+02:00' }, HEUTE);
+    assert.ok(r.ok);
+    assert.equal(r.wert.wirksam_ab, '2026-09-15');
+  });
+
+  test('behandelt Leerstring als unbekannt, nicht als Fehler', () => {
+    // Die Grammatik kennt keinen Nulltyp — eingeschränkte Modelle weichen aus.
+    const r = klassifikationPruefen({ ...GUELTIG, wirksam_ab: '' }, HEUTE);
+    assert.ok(r.ok);
+    assert.equal(r.wert.wirksam_ab, null);
+  });
+
+  test('ein unplausibler Zeitstempel wird trotz gültiger Form abgelehnt', () => {
+    const r = klassifikationPruefen({ ...GUELTIG, wirksam_ab: '2099-09-15T11:50:00+02:00' }, HEUTE);
+    assert.equal(r.ok, false);
+    assert.equal(r.fehler.feld, 'wirksam_ab');
+  });
+
+  test('weist Widerspruch zurück: relevanz "keine" mit befüllten bereichen', () => {
+    const r = klassifikationPruefen({ ...GUELTIG, relevanz: 'keine', bereiche: ['Formulare'] }, HEUTE);
+    assert.equal(r.ok, false);
+    assert.equal(r.fehler.feld, 'bereiche');
+  });
+
+  test('entfernt doppelte bereiche stillschweigend — Rauschen, kein Widerspruch', () => {
+    const r = klassifikationPruefen({ ...GUELTIG, bereiche: ['Formulare', 'Formulare', 'EÜR'] }, HEUTE);
+    assert.ok(r.ok);
+    assert.deepEqual(r.wert.bereiche, ['Formulare', 'EÜR']);
+  });
+
+  test('anbietersicheres Schema enthält weder pattern noch Uniontypen', () => {
+    // Ollama fällt bei beidem STILL auf freie Generierung zurück (2026-08-26).
+    const js = JSON.stringify(jsonSchema());
+    assert.equal(js.includes('pattern'), false, 'pattern bricht die Grammatik');
+    for (const [feld, def] of Object.entries(jsonSchema().properties)) {
+      assert.equal(Array.isArray(def.type), false, `Uniontyp bei "${feld}" bricht die Grammatik`);
+    }
+    assert.equal(jsonSchema().required.includes('wirksam_ab'), false,
+      'wirksam_ab verpflichtend zu machen erzwingt erfundene Daten');
+  });
 
   test('weist Nicht-Objekte zurück, statt sie durchzulassen', () => {
     for (const x of [null, 'text', 42, ['a']]) {
@@ -185,6 +228,33 @@ describe('Klassifikator gegen einen echten HTTP-Endpunkt', () => {
       await assert.rejects(
         () => klassifizieren(eintrag, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE),
         /HTTP 503/,
+      );
+    });
+  });
+
+  // Aus dem ersten echten Lauf gelernt: Ollama meldete HTTP 500, der Grund
+  // ("model requires more system memory") stand im Körper — und ging verloren.
+  test('Fehlermeldung trägt den Grund des Anbieters, nicht nur den Statuscode', async () => {
+    const grund = 'model requires more system memory (2.1 GiB) than is available (2.0 GiB)';
+    await mitServer((req, res) => {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: grund, type: 'api_error' } }));
+    }, async (basisUrl) => {
+      await assert.rejects(
+        () => klassifizieren(eintrag, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE),
+        (e) => e.message.includes('HTTP 500') && e.message.includes('system memory'),
+      );
+    });
+  });
+
+  test('nicht-JSON-Fehlerkörper wird gekürzt mitgegeben statt verschluckt', async () => {
+    await mitServer((req, res) => {
+      res.writeHead(502, { 'content-type': 'text/html' });
+      res.end('<html><body>  Bad   Gateway  </body></html>');
+    }, async (basisUrl) => {
+      await assert.rejects(
+        () => klassifizieren(eintrag, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE),
+        /Bad Gateway/,
       );
     });
   });

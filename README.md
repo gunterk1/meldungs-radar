@@ -9,7 +9,7 @@ ELSTER-Anbindung. Der Bedarf ist banal und wiederkehrend: Steuerregeln ändern s
 jährlich, das BMF meldet es öffentlich, und irgendwer muss es nachhalten.
 
 ```
-npm test                      # 26 Tests, keine Laufzeitabhängigkeiten
+npm test                      # 34 Tests, keine Laufzeitabhängigkeiten
 node bin/radar.mjs --trocken  # Feed abrufen und zeigen, ohne Modellaufruf
 node bin/radar.mjs            # ein vollständiger Durchlauf
 docker compose up -d          # n8n als Zeitgeber und Freigabeoberfläche
@@ -89,12 +89,37 @@ lib/regeln.mjs         Eskalationsregel und Protokollformat
 lib/klassifikator.mjs  provider-agnostischer Modellaufruf
 bin/radar.mjs          ein Durchlauf, auch als --trocken
 workflows/             n8n-Workflow: Zeitgeber, Ausführung, Freigabe
-test/                  26 Tests gegen einen Wegwerf-HTTP-Server
+test/                  34 Tests gegen einen Wegwerf-HTTP-Server
 ```
 
 **Eine Implementierung, nicht zwei.** Der n8n-Workflow ruft über einen Execute-Command-Node
 `bin/radar.mjs` im gemounteten Repo auf, statt die Logik in einem Code-Node nachzubauen.
 Was getestet ist, läuft auch produktiv.
+
+## Was vier echte Läufe gezeigt haben
+
+Alle gegen `qwen2.5:0.5b` über Ollama, dieselben zwanzig Meldungen vom 2026-08-26.
+Jeder Lauf deckte einen echten Defekt auf; jeder Defekt ist als Test festgehalten.
+
+| Lauf | Konfiguration | vorlegen · unklar | Befund |
+|---|---|---|---|
+| 1 | `response_format: json_object` | 11 · 9 | Modell erfindet `bereiche`-Werte („Kindergeld", „EU-Recht") statt aus dem Enum zu wählen |
+| 2 | volles JSON-Schema | 1 · 19 | **Ollama übersetzt `pattern` und Uniontypen nicht in seine Grammatik — und fällt dann STILL auf freie Generierung zurück.** HTTP 200, `finish_reason: "stop"`, Prosa statt JSON |
+| 3 | anbietersicheres Schema | 16 · 4 | Modell liefert `"2026-09-15T11:50:00+02:00"` statt eines Datums |
+| 4 | + Toleranz für Zeitstempel | **19 · 1** | Der letzte Fehler ist die Plausibilitätsprüfung: erfundenes `wirksam_ab` im Jahr **2013** |
+
+**Die wichtigste Lehre steht in Lauf 2.** Eingeschränkte Generierung ist ein *Hinweis*, keine
+Garantie — ein Anbieter, der ein Schemaelement nicht ausdrücken kann, verwirft die
+Einschränkung möglicherweise ohne Fehler und ohne Warnung. Die Laufzeitprüfung ist deshalb
+nicht Gürtel-und-Hosenträger, sondern die eigentliche Absicherung. `jsonSchema()` enthält
+darum bewusst weder `pattern` noch Uniontypen, und `wirksam_ab` ist nicht verpflichtend —
+sonst zwingt die Grammatik das Modell, ein Datum zu erfinden, wo keines im Text steht.
+
+**Und was die Läufe über das Modell sagen: `qwen2.5:0.5b` taugt für diese Aufgabe nicht.**
+In keinem der vier Läufe wurde ein einziger Eintrag archiviert — das Modell stufte auch das
+*Siebte Steuerforum der Finanzverwaltung* und die *körperschaftsteuerliche Organschaft* als
+relevant ein. Ein Werkzeug, das alles weiterreicht, spart keine Lesezeit. **Die Schutzschicht
+ist bewiesen, die Urteilsfähigkeit steht noch aus** — dafür braucht es ein größeres Modell.
 
 ## Was noch fehlt
 
@@ -104,6 +129,8 @@ Was getestet ist, läuft auch produktiv.
   Handlungsbedarf extrahieren. Die Feed-Beschreibungen sind im Median 255 Zeichen lang —
   genug für Relevanz, nicht für Inhalt.
 - **Rückschreiben der Freigabe** ins Protokoll.
+- **Ein Modell, das urteilen kann.** Siehe oben — die Schutzschicht steht, die
+  Klassifikationsgüte ist unbelegt.
 
 ## Lizenz
 
