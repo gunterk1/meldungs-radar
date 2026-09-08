@@ -3,10 +3,16 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { feedZerlegen, nurNeue } from '../lib/feed.mjs';
 import { klassifikationPruefen, SchemaFehler, jsonSchema } from '../lib/schema.mjs';
+import { profilLaden, profilPruefen, ProfilFehler, PROFILE } from '../lib/profil.mjs';
 import { eskalieren, VORLAGE, protokollZeile, KONFIDENZ_SCHWELLE } from '../lib/regeln.mjs';
-import { klassifizieren, nutzerPrompt } from '../lib/klassifikator.mjs';
+import { klassifizieren, nutzerPrompt, systemPrompt } from '../lib/klassifikator.mjs';
 
 const HEUTE = new Date('2026-08-26T00:00:00Z');
+
+// Die Schema- und Eskalationstests prüfen domänenfreie Logik. Sie brauchen
+// trotzdem EIN Profil, weil das Bereichs-Enum von dort kommt — genommen wird
+// das Steuerprofil, weil die Fixtures unten aus diesem Thema stammen.
+const PROFIL = await profilLaden('steuern');
 
 const FEED = `<?xml version="1.0"?><rss><channel>
 <item><title>Muster f&#252;r den Ausdruck der elektronischen Lohnsteuerbescheinigung f&uuml;r 2027</title>
@@ -47,14 +53,14 @@ describe('Feed', () => {
 
 describe('Schemaprüfung', () => {
   test('nimmt eine gültige Ausgabe an und normalisiert sie', () => {
-    const r = klassifikationPruefen(GUELTIG, HEUTE);
+    const r = klassifikationPruefen(GUELTIG, PROFIL, HEUTE);
     assert.ok(r.ok);
     assert.equal(r.wert.relevanz, 'hoch');
     assert.equal(r.wert.wirksam_ab, '2027-01-01');
   });
 
   test('fehlendes wirksam_ab wird zu null, nicht zu undefined', () => {
-    const r = klassifikationPruefen({ ...GUELTIG, wirksam_ab: undefined }, HEUTE);
+    const r = klassifikationPruefen({ ...GUELTIG, wirksam_ab: undefined }, PROFIL, HEUTE);
     assert.ok(r.ok);
     assert.equal(r.wert.wirksam_ab, null);
   });
@@ -70,7 +76,7 @@ describe('Schemaprüfung', () => {
     ['Konfidenz kein Zahlenwert',  { konfidenz: 'hoch' },                     'konfidenz'],
   ]) {
     test(`weist zurück: ${name}`, () => {
-      const r = klassifikationPruefen({ ...GUELTIG, ...patch }, HEUTE);
+      const r = klassifikationPruefen({ ...GUELTIG, ...patch }, PROFIL, HEUTE);
       assert.equal(r.ok, false);
       assert.ok(r.fehler instanceof SchemaFehler);
       assert.equal(r.fehler.feld, feld, `Fehler sollte Feld "${feld}" benennen, benannte "${r.fehler.feld}"`);
@@ -79,81 +85,81 @@ describe('Schemaprüfung', () => {
 
   test('nimmt einen vollständigen Zeitstempel an und kürzt auf das Datum', () => {
     // Real beobachtet am 2026-08-26. Toleranz gegenüber der FORM, nicht dem INHALT.
-    const r = klassifikationPruefen({ ...GUELTIG, wirksam_ab: '2026-09-15T11:50:00+02:00' }, HEUTE);
+    const r = klassifikationPruefen({ ...GUELTIG, wirksam_ab: '2026-09-15T11:50:00+02:00' }, PROFIL, HEUTE);
     assert.ok(r.ok);
     assert.equal(r.wert.wirksam_ab, '2026-09-15');
   });
 
   test('behandelt Leerstring als unbekannt, nicht als Fehler', () => {
     // Die Grammatik kennt keinen Nulltyp — eingeschränkte Modelle weichen aus.
-    const r = klassifikationPruefen({ ...GUELTIG, wirksam_ab: '' }, HEUTE);
+    const r = klassifikationPruefen({ ...GUELTIG, wirksam_ab: '' }, PROFIL, HEUTE);
     assert.ok(r.ok);
     assert.equal(r.wert.wirksam_ab, null);
   });
 
   test('ein unplausibler Zeitstempel wird trotz gültiger Form abgelehnt', () => {
-    const r = klassifikationPruefen({ ...GUELTIG, wirksam_ab: '2099-09-15T11:50:00+02:00' }, HEUTE);
+    const r = klassifikationPruefen({ ...GUELTIG, wirksam_ab: '2099-09-15T11:50:00+02:00' }, PROFIL, HEUTE);
     assert.equal(r.ok, false);
     assert.equal(r.fehler.feld, 'wirksam_ab');
   });
 
   test('weist Widerspruch zurück: relevanz "keine" mit befüllten bereichen', () => {
-    const r = klassifikationPruefen({ ...GUELTIG, relevanz: 'keine', bereiche: ['Formulare'] }, HEUTE);
+    const r = klassifikationPruefen({ ...GUELTIG, relevanz: 'keine', bereiche: ['Formulare'] }, PROFIL, HEUTE);
     assert.equal(r.ok, false);
     assert.equal(r.fehler.feld, 'bereiche');
   });
 
   test('entfernt doppelte bereiche stillschweigend — Rauschen, kein Widerspruch', () => {
-    const r = klassifikationPruefen({ ...GUELTIG, bereiche: ['Formulare', 'Formulare', 'EÜR'] }, HEUTE);
+    const r = klassifikationPruefen({ ...GUELTIG, bereiche: ['Formulare', 'Formulare', 'EÜR'] }, PROFIL, HEUTE);
     assert.ok(r.ok);
     assert.deepEqual(r.wert.bereiche, ['Formulare', 'EÜR']);
   });
 
   test('anbietersicheres Schema enthält weder pattern noch Uniontypen', () => {
     // Ollama fällt bei beidem STILL auf freie Generierung zurück (2026-08-26).
-    const js = JSON.stringify(jsonSchema());
+    const js = JSON.stringify(jsonSchema(PROFIL));
     assert.equal(js.includes('pattern'), false, 'pattern bricht die Grammatik');
-    for (const [feld, def] of Object.entries(jsonSchema().properties)) {
+    for (const [feld, def] of Object.entries(jsonSchema(PROFIL).properties)) {
       assert.equal(Array.isArray(def.type), false, `Uniontyp bei "${feld}" bricht die Grammatik`);
     }
-    assert.equal(jsonSchema().required.includes('wirksam_ab'), false,
+    assert.equal(jsonSchema(PROFIL).required.includes('wirksam_ab'), false,
       'wirksam_ab verpflichtend zu machen erzwingt erfundene Daten');
   });
 
   test('weist Nicht-Objekte zurück, statt sie durchzulassen', () => {
     for (const x of [null, 'text', 42, ['a']]) {
-      assert.equal(klassifikationPruefen(x, HEUTE).ok, false);
+      assert.equal(klassifikationPruefen(x, PROFIL, HEUTE).ok, false);
     }
   });
 });
 
 describe('Eskalationsregel', () => {
   test('relevanter Eintrag wird vorgelegt', () => {
-    const e = eskalieren(klassifikationPruefen(GUELTIG, HEUTE));
+    const e = eskalieren(klassifikationPruefen(GUELTIG, PROFIL, HEUTE));
     assert.equal(e.vorlage, VORLAGE.PRUEFEN);
   });
 
   test('sicher irrelevanter Eintrag wandert ins Archiv', () => {
-    const p = klassifikationPruefen({ ...GUELTIG, relevanz: 'keine', bereiche: [], konfidenz: 0.95 }, HEUTE);
+    const p = klassifikationPruefen({ ...GUELTIG, relevanz: 'keine', bereiche: [], konfidenz: 0.95 }, PROFIL, HEUTE);
     assert.equal(eskalieren(p).vorlage, VORLAGE.ARCHIV);
   });
 
   test('UNSICHER irrelevanter Eintrag wird trotzdem vorgelegt', () => {
-    const p = klassifikationPruefen({ ...GUELTIG, relevanz: 'keine', bereiche: [], konfidenz: 0.4 }, HEUTE);
+    const p = klassifikationPruefen({ ...GUELTIG, relevanz: 'keine', bereiche: [], konfidenz: 0.4 }, PROFIL, HEUTE);
     const e = eskalieren(p);
     assert.equal(e.vorlage, VORLAGE.UNKLAR);
     assert.match(e.grund, /Konfidenz/);
   });
 
   test('genau an der Schwelle wird archiviert, knapp darunter nicht', () => {
-    const bei = klassifikationPruefen({ ...GUELTIG, relevanz: 'keine', bereiche: [], konfidenz: KONFIDENZ_SCHWELLE }, HEUTE);
-    const unter = klassifikationPruefen({ ...GUELTIG, relevanz: 'keine', bereiche: [], konfidenz: KONFIDENZ_SCHWELLE - 0.01 }, HEUTE);
+    const bei = klassifikationPruefen({ ...GUELTIG, relevanz: 'keine', bereiche: [], konfidenz: KONFIDENZ_SCHWELLE }, PROFIL, HEUTE);
+    const unter = klassifikationPruefen({ ...GUELTIG, relevanz: 'keine', bereiche: [], konfidenz: KONFIDENZ_SCHWELLE - 0.01 }, PROFIL, HEUTE);
     assert.equal(eskalieren(bei).vorlage, VORLAGE.ARCHIV);
     assert.equal(eskalieren(unter).vorlage, VORLAGE.UNKLAR);
   });
 
   test('ungültige Modellausgabe wird ESKALIERT, nicht verworfen', () => {
-    const p = klassifikationPruefen({ relevanz: 'quatsch' }, HEUTE);
+    const p = klassifikationPruefen({ relevanz: 'quatsch' }, PROFIL, HEUTE);
     const e = eskalieren(p);
     assert.equal(e.vorlage, VORLAGE.UNKLAR);
     assert.match(e.grund, /Schemaprüfung fehlgeschlagen/);
@@ -161,7 +167,7 @@ describe('Eskalationsregel', () => {
 
   test('Protokollzeile ist gültiges JSON und lässt Freigabefelder offen', () => {
     const eintrag = feedZerlegen(FEED)[0];
-    const pruefung = klassifikationPruefen(GUELTIG, HEUTE);
+    const pruefung = klassifikationPruefen(GUELTIG, PROFIL, HEUTE);
     const z = JSON.parse(protokollZeile({
       eintrag, pruefung, entscheidung: eskalieren(pruefung),
       modell: 'test', zeitpunkt: HEUTE.toISOString(),
@@ -201,7 +207,7 @@ describe('Klassifikator gegen einen echten HTTP-Endpunkt', () => {
 
   test('gültige Modellantwort kommt geprüft zurück', async () => {
     await mitServer(antwortet(JSON.stringify(GUELTIG)), async (basisUrl) => {
-      const r = await klassifizieren(eintrag, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE);
+      const r = await klassifizieren(eintrag, PROFIL, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE);
       assert.ok(r.ok);
       assert.equal(r.wert.relevanz, 'hoch');
     });
@@ -209,7 +215,7 @@ describe('Klassifikator gegen einen echten HTTP-Endpunkt', () => {
 
   test('Modellausgabe ohne gültiges JSON wird abgefangen, nicht geworfen', async () => {
     await mitServer(antwortet('Klar! Hier ist die Antwort:'), async (basisUrl) => {
-      const r = await klassifizieren(eintrag, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE);
+      const r = await klassifizieren(eintrag, PROFIL, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE);
       assert.equal(r.ok, false);
       assert.match(r.fehler.message, /kein gültiges JSON/);
     });
@@ -217,7 +223,7 @@ describe('Klassifikator gegen einen echten HTTP-Endpunkt', () => {
 
   test('schemawidrige Modellausgabe wird abgefangen', async () => {
     await mitServer(antwortet(JSON.stringify({ ...GUELTIG, konfidenz: 7 })), async (basisUrl) => {
-      const r = await klassifizieren(eintrag, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE);
+      const r = await klassifizieren(eintrag, PROFIL, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE);
       assert.equal(r.ok, false);
       assert.equal(r.fehler.feld, 'konfidenz');
     });
@@ -226,7 +232,7 @@ describe('Klassifikator gegen einen echten HTTP-Endpunkt', () => {
   test('HTTP-Fehler des Anbieters wirft mit Endpunkt in der Meldung', async () => {
     await mitServer((req, res) => { res.writeHead(503); res.end('{}'); }, async (basisUrl) => {
       await assert.rejects(
-        () => klassifizieren(eintrag, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE),
+        () => klassifizieren(eintrag, PROFIL, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE),
         /HTTP 503/,
       );
     });
@@ -241,7 +247,7 @@ describe('Klassifikator gegen einen echten HTTP-Endpunkt', () => {
       res.end(JSON.stringify({ error: { message: grund, type: 'api_error' } }));
     }, async (basisUrl) => {
       await assert.rejects(
-        () => klassifizieren(eintrag, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE),
+        () => klassifizieren(eintrag, PROFIL, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE),
         (e) => e.message.includes('HTTP 500') && e.message.includes('system memory'),
       );
     });
@@ -253,7 +259,7 @@ describe('Klassifikator gegen einen echten HTTP-Endpunkt', () => {
       res.end('<html><body>  Bad   Gateway  </body></html>');
     }, async (basisUrl) => {
       await assert.rejects(
-        () => klassifizieren(eintrag, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE),
+        () => klassifizieren(eintrag, PROFIL, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE),
         /Bad Gateway/,
       );
     });
@@ -265,7 +271,7 @@ describe('Klassifikator gegen einen echten HTTP-Endpunkt', () => {
       gesehen = req.headers.authorization ?? null;
       antwortet(JSON.stringify(GUELTIG))(req, res);
     }, async (basisUrl) => {
-      await klassifizieren(eintrag, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE);
+      await klassifizieren(eintrag, PROFIL, { basisUrl, modell: 'test', schluessel: '' }, fetch, HEUTE);
     });
     assert.equal(gesehen, null, 'Ein leerer Schlüssel darf nicht als "Bearer " gesendet werden');
   });
@@ -274,5 +280,77 @@ describe('Klassifikator gegen einen echten HTTP-Endpunkt', () => {
     const p = nutzerPrompt(eintrag);
     assert.match(p, /Lohnsteuerbescheinigung/);
     assert.match(p, /Vordruckmuster/);
+  });
+});
+
+describe('Domänenprofil', () => {
+  test('jedes mitgelieferte Profil besteht die eigene Prüfung', async () => {
+    for (const id of PROFILE) {
+      const p = await profilLaden(id);
+      assert.equal(p.id, id, `${id}: id im Modul weicht vom Dateinamen ab`);
+    }
+  });
+
+  test('unbekannte Kennung nennt die verfügbaren Profile, statt nur zu scheitern', async () => {
+    await assert.rejects(() => profilLaden('gibtsnicht'), (e) =>
+      e instanceof ProfilFehler && PROFILE.every((id) => e.message.includes(id)));
+  });
+
+  const kaputt = {
+    'feed fehlt':            { feed: undefined },
+    'feed ohne https':       { feed: 'http://example.org/f.xml' },
+    'bereiche leer':         { bereiche: [] },
+    'bereiche mit Duplikat': { bereiche: ['A', 'A'] },
+    'bedeutung fehlt':       { wirksamAb: { minJahre: -1, maxJahre: 1 } },
+    'Fenster verdreht':      { wirksamAb: { bedeutung: 'x', minJahre: 5, maxJahre: -5 } },
+  };
+  for (const [name, patch] of Object.entries(kaputt)) {
+    test(`weist Profil zurück: ${name}`, async () => {
+      const gut = await profilLaden('bsi');
+      assert.throws(() => profilPruefen({ ...gut, ...patch }), ProfilFehler);
+    });
+  }
+
+  // Der eigentliche Beweis, dass das Profil trägt: DIESELBE Eingabe wird je
+  // nach Profil angenommen oder zurückgewiesen. Ein Steuertermin darf fünf
+  // Jahre in der Zukunft liegen, ein Sicherheitspatch nicht.
+  test('das Plausibilitätsfenster ist wirklich profilabhängig', async () => {
+    const steuern = await profilLaden('steuern');
+    const bsi = await profilLaden('bsi');
+    const in5Jahren = { relevanz: 'keine', bereiche: [], was_aendert_sich: 'x',
+                        wirksam_ab: '2031-08-26', konfidenz: 0.9 };
+
+    assert.equal(klassifikationPruefen(in5Jahren, steuern, HEUTE).ok, true,
+      'Steuerprofil erlaubt +10 Jahre — 2031 muss durchgehen');
+    const abgelehnt = klassifikationPruefen(in5Jahren, bsi, HEUTE);
+    assert.equal(abgelehnt.ok, false, 'BSI-Profil erlaubt nur +2 Jahre');
+    assert.equal(abgelehnt.fehler.feld, 'wirksam_ab');
+  });
+
+  test('das anbietersichere Schema trägt das Enum DES PROFILS', async () => {
+    for (const id of PROFILE) {
+      const p = await profilLaden(id);
+      assert.deepEqual(jsonSchema(p).properties.bereiche.items.enum, p.bereiche);
+    }
+  });
+
+  test('der Prompt trägt Auftrag UND Vertrag — die Trennung ist die Zusage', async () => {
+    const p = await profilLaden('bsi');
+    const prompt = systemPrompt(p);
+    assert.ok(prompt.includes(p.auftrag), 'Auftrag des Profils fehlt');
+    assert.ok(prompt.includes(p.wirksamAb.bedeutung), 'Bedeutung von wirksam_ab fehlt');
+    for (const b of p.bereiche) assert.ok(prompt.includes(b), `Bereich "${b}" fehlt im Prompt`);
+    assert.ok(prompt.includes('konfidenz'), 'Vertragsteil fehlt');
+  });
+
+  // Das BSI-Profil steht und fällt mit der Negativliste: Ohne sie muss das
+  // Modell raten, ob eine Firewall-Warnung "uns" betrifft. Verschwindet sie
+  // beim Umformulieren, wird das Profil still schlechter.
+  test('das BSI-Profil benennt ausdrücklich, was NICHT im Bestand ist', async () => {
+    const p = await profilLaden('bsi');
+    assert.match(p.auftrag, /NICHT IM BESTAND/);
+    for (const fremd of ['SharePoint', 'Fortinet', 'MongoDB', 'cPanel']) {
+      assert.ok(p.auftrag.includes(fremd), `"${fremd}" fehlt in der Negativliste`);
+    }
   });
 });

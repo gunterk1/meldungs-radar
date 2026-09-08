@@ -12,9 +12,10 @@ services:
       - TZ=Europe/Berlin
       - N8N_DIAGNOSTICS_ENABLED=false          # keine Telemetrie
       - N8N_RUNNERS_ENABLED=true
-      - STEUERRADAR_BASIS_URL=${STEUERRADAR_BASIS_URL:-https://api.openai.com/v1}
-      - STEUERRADAR_MODELL=${STEUERRADAR_MODELL:-gpt-4o-mini}
-      - STEUERRADAR_API_KEY=${STEUERRADAR_API_KEY:-}
+      - RADAR_BASIS_URL=${RADAR_BASIS_URL:-https://api.openai.com/v1}
+      - RADAR_MODELL=${RADAR_MODELL:-gpt-4o-mini}
+      - RADAR_API_KEY=${RADAR_API_KEY:-}
+      - RADAR_PROFIL=${RADAR_PROFIL:-bsi}
     volumes:
       - ./n8n-daten:/home/node/.n8n
       - .:/repo                                 # das getestete Repo, nicht kopierter Code

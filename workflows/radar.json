@@ -1,5 +1,5 @@
 {
-  "name": "Steuer-Radar — BMF-Meldungen klassifizieren und vorlegen",
+  "name": "Radar — Behördenmeldungen klassifizieren und vorlegen (Profil: bsi)",
   "nodes": [
     {
       "parameters": {
@@ -13,7 +13,7 @@
     },
     {
       "parameters": {
-        "command": "node /repo/bin/radar.mjs"
+        "command": "node /repo/bin/radar.mjs --profil bsi"
       },
       "id": "a1000000-0000-4000-8000-000000000002",
       "name": "Radar ausführen",
@@ -24,7 +24,7 @@
     },
     {
       "parameters": {
-        "fileSelector": "/repo/data/protokoll.jsonl",
+        "fileSelector": "/repo/data/protokoll-bsi.jsonl",
         "options": {}
       },
       "id": "a1000000-0000-4000-8000-000000000003",
@@ -45,7 +45,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// FREIGABESCHRITT — hier wird nichts automatisch wirksam.\n//\n// Ersetze diesen Node durch den Kanal, über den DU entscheidest:\n// E-Mail, Slack, oder n8n \"Send and Wait for Response\" für Zustimmen/Ablehnen.\n// Die Freigabefelder im Protokoll (freigabe, freigegeben_von, freigegeben_am)\n// sind dafür vorgesehen und bleiben bis dahin null.\nreturn $input.all().map((i) => ({ json: {\n  betreff: `[Steuer-Radar] ${i.json.vorlage === 'unklar' ? 'Unklar' : 'Relevant'}: ${i.json.titel}`,\n  text: [\n    i.json.titel,\n    '',\n    i.json.modellausgabe?.was_aendert_sich ?? '(keine gültige Modellausgabe)',\n    i.json.modellausgabe?.bereiche?.length ? `Bereiche: ${i.json.modellausgabe.bereiche.join(', ')}` : '',\n    i.json.modellausgabe?.wirksam_ab ? `Wirksam ab: ${i.json.modellausgabe.wirksam_ab}` : '',\n    `Einstufung: ${i.json.vorlage} — ${i.json.grund}`,\n    '',\n    i.json.link,\n  ].filter(Boolean).join('\\n'),\n  link: i.json.link,\n} }));"
+        "jsCode": "// FREIGABESCHRITT — hier wird nichts automatisch wirksam.\n//\n// Ersetze diesen Node durch den Kanal, über den DU entscheidest:\n// E-Mail, Slack, oder n8n \"Send and Wait for Response\" für Zustimmen/Ablehnen.\n// Die Freigabefelder im Protokoll (freigabe, freigegeben_von, freigegeben_am)\n// sind dafür vorgesehen und bleiben bis dahin null.\nreturn $input.all().map((i) => ({ json: {\n  betreff: `[Radar] ${i.json.vorlage === 'unklar' ? 'Unklar' : 'Relevant'}: ${i.json.titel}`,\n  text: [\n    i.json.titel,\n    '',\n    i.json.modellausgabe?.was_aendert_sich ?? '(keine gültige Modellausgabe)',\n    i.json.modellausgabe?.bereiche?.length ? `Bereiche: ${i.json.modellausgabe.bereiche.join(', ')}` : '',\n    i.json.modellausgabe?.wirksam_ab ? `Wirksam ab: ${i.json.modellausgabe.wirksam_ab}` : '',\n    `Einstufung: ${i.json.vorlage} — ${i.json.grund}`,\n    '',\n    i.json.link,\n  ].filter(Boolean).join('\\n'),\n  link: i.json.link,\n} }));"
       },
       "id": "a1000000-0000-4000-8000-000000000005",
       "name": "Zur Freigabe aufbereiten",

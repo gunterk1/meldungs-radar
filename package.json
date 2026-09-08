@@ -1,13 +1,14 @@
 {
   "name": "steuer-radar",
   "version": "0.1.0",
-  "description": "Überwacht BMF-Steuermeldungen, klassifiziert sie per LLM und legt sie einem Menschen vor. Keine Laufzeitabhängigkeiten.",
+  "description": "Überwacht einen Behörden-Feed, klassifiziert jede Meldung per LLM gegen ein Domänenprofil und legt sie einem Menschen vor. Zwei Profile mitgeliefert. Keine Laufzeitabhängigkeiten.",
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": {
     "test": "node --test",
     "radar": "node bin/radar.mjs",
-    "trocken": "node bin/radar.mjs --trocken"
+    "trocken": "node bin/radar.mjs --trocken",
+    "trocken:steuern": "node bin/radar.mjs --profil steuern --trocken"
   },
   "license": "MIT"
 }

@@ -2,27 +2,45 @@
 /**
  * Ein Durchlauf des Radars — dieselbe Logik, die der n8n-Workflow orchestriert.
  *
- *   node bin/radar.mjs            einmal laufen
- *   node bin/radar.mjs --trocken  ohne Modellaufruf, nur Feed und Dedup
+ *   node bin/radar.mjs                      einmal laufen (Profil: bsi)
+ *   node bin/radar.mjs --profil steuern     anderes Thema, gleicher Code
+ *   node bin/radar.mjs --trocken            ohne Modellaufruf, nur Feed und Dedup
+ *
+ * Der Zustand liegt PRO PROFIL getrennt (data/gesehen-{id}.json). Ein
+ * gemeinsamer Speicher würde beim Profilwechsel Einträge als gesehen führen,
+ * die das andere Profil nie beurteilt hat.
  */
 import { readFile, writeFile, appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { feedHolen, nurNeue, BMF_STEUERN_FEED } from '../lib/feed.mjs';
+import { feedHolen, nurNeue } from '../lib/feed.mjs';
+import { profilLaden, PROFILE } from '../lib/profil.mjs';
 import { klassifizieren, konfigAusUmgebung } from '../lib/klassifikator.mjs';
 import { eskalieren, protokollZeile, VORLAGE } from '../lib/regeln.mjs';
 
 const WURZEL = join(dirname(fileURLToPath(import.meta.url)), '..');
-const GESEHEN = join(WURZEL, 'data', 'gesehen.json');
-const PROTOKOLL = join(WURZEL, 'data', 'protokoll.jsonl');
 const trocken = process.argv.includes('--trocken');
+
+const flagIndex = process.argv.indexOf('--profil');
+const profilId = flagIndex !== -1 ? process.argv[flagIndex + 1] : (process.env.RADAR_PROFIL || 'bsi');
+let profil;
+try {
+  profil = await profilLaden(profilId);
+} catch (e) {
+  console.error(`${e.message}\nAufruf: node bin/radar.mjs [--profil ${PROFILE.join('|')}]`);
+  process.exit(2);
+}
+
+const GESEHEN = join(WURZEL, 'data', `gesehen-${profil.id}.json`);
+const PROTOKOLL = join(WURZEL, 'data', `protokoll-${profil.id}.jsonl`);
 
 async function gesehenLaden() {
   try { return new Set(JSON.parse(await readFile(GESEHEN, 'utf8'))); }
   catch { return new Set(); }
 }
 
-const eintraege = await feedHolen(BMF_STEUERN_FEED);
+console.log(`Profil: ${profil.name} — ${profil.frage}`);
+const eintraege = await feedHolen(profil.feed);
 const gesehen = await gesehenLaden();
 const neu = nurNeue(eintraege, gesehen);
 
@@ -42,7 +60,7 @@ const zaehler = { [VORLAGE.PRUEFEN]: 0, [VORLAGE.UNKLAR]: 0, [VORLAGE.ARCHIV]: 0
 for (const eintrag of neu) {
   let pruefung;
   try {
-    pruefung = await klassifizieren(eintrag, konfig);
+    pruefung = await klassifizieren(eintrag, profil, konfig);
   } catch (e) {
     // Anbieter nicht erreichbar: Eintrag NICHT als gesehen markieren, damit der
     // nächste Lauf ihn erneut aufgreift. Ein Ausfall darf nichts verschlucken.

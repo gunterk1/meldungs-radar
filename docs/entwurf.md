@@ -41,3 +41,51 @@ Gefühl — nach Protokoll.**
 - **ELSTER-Rückmeldungen übersetzen.** Der bessere Geschäftsfall — Fehlercode auflösen,
   Erklärung entwerfen, freigeben, versenden. Aber Bezug zur konkreten Abgabe, also
   Kundendaten. Der natürliche zweite Schritt, sobald diese Bauform steht.
+
+---
+
+# Umbau auf Domänenprofile (2026-09-08)
+
+## Warum das Thema wechselte
+
+Das Repo behauptete, eine übertragbare Bauform zu zeigen, belegte aber eine
+Steueranwendung. Solange die Domäne an vier Stellen im Code klebte — Feed-URL,
+Bereichs-Enum, Prompt, Namen —, war die Behauptung nicht prüfbar. Zwei Profile
+belegen, was eines nur behaupten kann.
+
+## Die Feed-Auswahl war empirisch, nicht thematisch
+
+Erste Idee war Baurecht. Vier Kandidatenquellen wurden am 2026-09-08 tatsächlich
+abgerufen, statt sie zu beurteilen — und die Erhebung kippte die Wahl:
+
+| Quelle | Befund |
+|---|---|
+| **BSI Cyber-Sicherheitswarnungen** | 50 Einträge, jeder substanziell, Relevanz hängt am eigenen Bestand. **Gewählt.** |
+| G-BA (letzte Änderungen) | 10 Einträge, dicht und regulatorisch — aber derselbe Beschluss erscheint 3× unter verschiedenen Anlagen. Bräuchte Near-Duplicate-Erkennung, die es hier nicht gibt. |
+| BMWSB (Bauen) | **Presse-Feed.** Von 20 Einträgen ist genau einer regulatorisch (CO2KostenAufG). Spatenstich, Fotowettbewerb, Girls' Day. Regulatorisches Baurecht steht in 16 Landesbauordnungen, nicht in Ministeriums-Pressemeldungen — **falsche Quelle, nicht schwieriges Thema.** |
+| DIBt | kein auffindbarer Feed. |
+
+Der BMWSB-Feed lieferte dabei das schönste Filter-Gegenbeispiel, das die
+Erhebung hergab, und es ist zu gut, um es wegzuwerfen: Ein Stichwortfilter auf
+`Bau` nimmt **„Branitzer Baumuniversität"** mit und verwirft
+**„CO2KostenAufG"** — die einzige regulatorische Meldung im Feed. Substring-
+Treffer und Fachbegriff gehen in entgegengesetzte Richtungen.
+
+**Wieder bestätigt:** Von sechs geratenen Feed-URLs lieferten alle sechs HTTP 404
+mit 60–160 KB Körper — die Fehlerseiten der Portale. Die echten Adressen standen
+in den Startseiten. Dieselbe Lehre wie am 2026-08-26, nur teurer, weil ich sie
+kannte.
+
+## Was das Profil bewusst NICHT darf
+
+Die Form der Modellausgabe ändern. Die Versuchung war da: Für
+Sicherheitswarnungen wären `cve`, `aktiv_ausgenutzt` und `betroffene_produkte`
+die natürlichen Felder, und `wirksam_ab` passt schlecht. Ein profilabhängiges
+Schema hätte aber die gemeinsame Prüfung aufgelöst — und die ist der Kern des
+Werkzeugs, nicht das Vokabular.
+
+Gewählt wurde der Mittelweg: **fester Vertrag, austauschbares Vokabular.**
+`wirksam_ab` bleibt, aber jedes Profil muss ausdrücklich sagen, was es dort
+meint (`wirksamAb.bedeutung`) und welches Fenster plausibel ist. Der Preis ist
+ein Feld, das im BSI-Profil selten gefüllt ist. Das ist ehrlicher als ein Feld,
+das überall passt und nirgends etwas bedeutet.
